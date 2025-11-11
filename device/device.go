@@ -11,11 +11,47 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tailscale/wireguard-go/conn"
-	"github.com/tailscale/wireguard-go/ratelimiter"
-	"github.com/tailscale/wireguard-go/rwcancel"
-	"github.com/tailscale/wireguard-go/tun"
+	"github.com/tailscale/wireguard-go-awg/conn"
+	"github.com/tailscale/wireguard-go-awg/device/awg"
+	"github.com/tailscale/wireguard-go-awg/ratelimiter"
+	"github.com/tailscale/wireguard-go-awg/rwcancel"
+	"github.com/tailscale/wireguard-go-awg/tun"
 )
+
+type Version uint8
+
+const (
+	VersionDefault Version = iota
+	VersionAwg
+	VersionAwgSpecialHandshake
+)
+
+// AtomicVersion provides atomic operations for Version
+type AtomicVersion struct {
+	value atomic.Uint32
+}
+
+func NewAtomicVersion(v Version) *AtomicVersion {
+	av := &AtomicVersion{}
+	av.Store(v)
+	return av
+}
+
+func (av *AtomicVersion) Load() Version {
+	return Version(av.value.Load())
+}
+
+func (av *AtomicVersion) Store(v Version) {
+	av.value.Store(uint32(v))
+}
+
+func (av *AtomicVersion) CompareAndSwap(old, new Version) bool {
+	return av.value.CompareAndSwap(uint32(old), uint32(new))
+}
+
+func (av *AtomicVersion) Swap(new Version) Version {
+	return Version(av.value.Swap(uint32(new)))
+}
 
 type Device struct {
 	state struct {
@@ -89,6 +125,9 @@ type Device struct {
 	ipcMutex sync.RWMutex
 	closed   chan struct{}
 	log      *Logger
+
+	version Version
+	awg     awg.Protocol
 }
 
 // deviceState represents the state of a Device.
@@ -397,6 +436,20 @@ func (device *Device) Close() {
 
 	device.log.Verbosef("Device closed")
 	close(device.closed)
+}
+
+// isAWG returns true if AWG obfuscation is enabled
+func (device *Device) isAWG() bool {
+	return device.version >= VersionAwg
+}
+
+// resetProtocol restores default WireGuard message type values
+func (device *Device) resetProtocol() {
+	// restore default message type values
+	MessageInitiationType = DefaultMessageInitiationType
+	MessageResponseType = DefaultMessageResponseType
+	MessageCookieReplyType = DefaultMessageCookieReplyType
+	MessageTransportType = DefaultMessageTransportType
 }
 
 func (device *Device) Wait() chan struct{} {

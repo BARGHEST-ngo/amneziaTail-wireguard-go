@@ -11,8 +11,8 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/tailscale/wireguard-go/conn"
-	"github.com/tailscale/wireguard-go/tun/tuntest"
+	"github.com/tailscale/wireguard-go-awg/conn"
+	"github.com/tailscale/wireguard-go-awg/tun/tuntest"
 )
 
 func TestCurveWrappers(t *testing.T) {

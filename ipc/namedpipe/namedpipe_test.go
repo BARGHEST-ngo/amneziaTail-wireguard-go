@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tailscale/wireguard-go/ipc/namedpipe"
+	"github.com/tailscale/wireguard-go-awg/ipc/namedpipe"
 	"golang.org/x/sys/windows"
 )
 

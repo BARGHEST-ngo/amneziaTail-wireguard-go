@@ -16,8 +16,8 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/poly1305"
 
-	"github.com/tailscale/wireguard-go/conn"
-	"github.com/tailscale/wireguard-go/tai64n"
+	"github.com/tailscale/wireguard-go-awg/conn"
+	"github.com/tailscale/wireguard-go-awg/tai64n"
 )
 
 type handshakeState int
@@ -55,10 +55,17 @@ const (
 )
 
 const (
-	MessageInitiationType  = 1
-	MessageResponseType    = 2
-	MessageCookieReplyType = 3
-	MessageTransportType   = 4
+	DefaultMessageInitiationType  uint32 = 1
+	DefaultMessageResponseType    uint32 = 2
+	DefaultMessageCookieReplyType uint32 = 3
+	DefaultMessageTransportType   uint32 = 4
+)
+
+var (
+	MessageInitiationType  uint32 = DefaultMessageInitiationType
+	MessageResponseType    uint32 = DefaultMessageResponseType
+	MessageCookieReplyType uint32 = DefaultMessageCookieReplyType
+	MessageTransportType   uint32 = DefaultMessageTransportType
 )
 
 const (

@@ -8,7 +8,7 @@ package device
 import (
 	"fmt"
 
-	"github.com/tailscale/wireguard-go/tun"
+	"github.com/tailscale/wireguard-go-awg/tun"
 )
 
 const DefaultMTU = 1420
