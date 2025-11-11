@@ -8,7 +8,10 @@ package device
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -363,6 +366,13 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
 	go device.RoutineReadFromTUN()
 	go device.RoutineTUNEventReader()
 
+	// Load AWG configuration from file if it exists
+	if err := device.loadAWGConfigFromFile(); err != nil {
+		device.log.Verbosef("AWG config not loaded: %v", err)
+	} else {
+		device.log.Verbosef("AWG configuration loaded successfully")
+	}
+
 	return device
 }
 
@@ -705,4 +715,48 @@ func (device *Device) BindClose() error {
 	err := closeBindLocked(device)
 	device.net.Unlock()
 	return err
+}
+
+// loadAWGConfigFromFile reads AWG UAPI configuration from the filesystem and applies it
+// The file should contain pre-formatted UAPI config (already validated and converted)
+func (device *Device) loadAWGConfigFromFile() error {
+	// Try multiple possible locations for UAPI config file
+	configPaths := []string{
+		os.Getenv("AWG_UAPI_CONFIG_FILE"),                  // Environment variable
+		"/data/data/com.barghest.mesh/files/awg_uapi.conf", // Android app data (UAPI format)
+		filepath.Join(os.Getenv("HOME"), "awg_uapi.conf"),  // HOME directory (UAPI format)
+	}
+
+	var uapiConfig string
+	var usedPath string
+
+	for _, path := range configPaths {
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err == nil {
+			uapiConfig = string(data)
+			usedPath = path
+			break
+		}
+	}
+
+	if uapiConfig == "" {
+		return fmt.Errorf("no AWG UAPI config file found")
+	}
+
+	// Apply configuration via UAPI
+	// The file should already be in UAPI format with lines like:
+	// awg_enabled=true
+	// awg_junk_packet_count=5
+	// awg_magic_header_1=157-157
+	// etc.
+	err := device.IpcSetOperation(strings.NewReader(uapiConfig))
+	if err != nil {
+		return fmt.Errorf("failed to apply AWG config from %s: %w", usedPath, err)
+	}
+
+	device.log.Verbosef("AWG configuration loaded from %s", usedPath)
+	return nil
 }
