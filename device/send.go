@@ -127,15 +127,57 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		return err
 	}
 
+	// Send junk packets if AWG is enabled
+	var junkedHeader []byte
+	if peer.device.isAWG() {
+		var junks [][]byte
+
+		// Check if special handshake is enabled
+		if peer.device.version == VersionAwgSpecialHandshake {
+			peer.device.awg.Mux.RLock()
+			if peer.device.awg.HandshakeHandler.IsSet {
+				junks = peer.device.awg.HandshakeHandler.GenerateSpecialJunk()
+			} else {
+				junks = make([][]byte, 0, peer.device.awg.Cfg.JunkPacketCount)
+			}
+			peer.device.awg.Mux.RUnlock()
+		} else {
+			junks = make([][]byte, 0, peer.device.awg.Cfg.JunkPacketCount)
+		}
+
+		peer.device.awg.Mux.RLock()
+		peer.device.awg.JunkCreator.CreateJunkPackets(&junks)
+		peer.device.awg.Mux.RUnlock()
+
+		if len(junks) > 0 {
+			err = peer.SendBuffers(junks)
+			if err != nil {
+				peer.device.log.Errorf("%v - Failed to send junk packets: %v", peer, err)
+				return err
+			}
+		}
+
+		junkedHeader, err = peer.device.awg.CreateInitHeaderJunk()
+		if err != nil {
+			peer.device.log.Errorf("%v - %v", peer, err)
+			return err
+		}
+	}
+
 	buf := make([]byte, MessageEncapsulatingTransportSize+MessageInitiationSize)
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = msg.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
 
+	// Prepend junk header if AWG is enabled
+	if peer.device.isAWG() && len(junkedHeader) > 0 {
+		packet = append(junkedHeader, packet...)
+	}
+
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
-	err = peer.SendBuffers([][]byte{buf})
+	err = peer.SendBuffers([][]byte{packet})
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake initiation: %v", peer, err)
 	}
@@ -157,10 +199,25 @@ func (peer *Peer) SendHandshakeResponse() error {
 		return err
 	}
 
+	// Create junk header if AWG is enabled
+	var junkedHeader []byte
+	if peer.device.isAWG() {
+		junkedHeader, err = peer.device.awg.CreateResponseHeaderJunk()
+		if err != nil {
+			peer.device.log.Errorf("%v - %v", peer, err)
+			return err
+		}
+	}
+
 	buf := make([]byte, MessageEncapsulatingTransportSize+MessageResponseSize)
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = response.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
+
+	// Prepend junk header if AWG is enabled
+	if peer.device.isAWG() && len(junkedHeader) > 0 {
+		packet = append(junkedHeader, packet...)
+	}
 
 	err = peer.BeginSymmetricSession()
 	if err != nil {
@@ -173,7 +230,7 @@ func (peer *Peer) SendHandshakeResponse() error {
 	peer.timersAnyAuthenticatedPacketSent()
 
 	// TODO: allocation could be avoided
-	err = peer.SendBuffers([][]byte{buf})
+	err = peer.SendBuffers([][]byte{packet})
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
 	}
@@ -190,11 +247,40 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 		return err
 	}
 
+	// Get message type with AWG magic header if enabled
+	var msgType uint32
+	if device.isAWG() {
+		device.awg.Mux.RLock()
+		msgType, err = device.awg.GetMsgType(DefaultMessageCookieReplyType)
+		device.awg.Mux.RUnlock()
+		if err != nil {
+			device.log.Errorf("Failed to get AWG message type: %v", err)
+			return err
+		}
+		reply.Type = msgType
+	}
+
+	// Create junk header if AWG is enabled
+	var junkedHeader []byte
+	if device.isAWG() {
+		junkedHeader, err = device.awg.CreateCookieReplyHeaderJunk()
+		if err != nil {
+			device.log.Errorf("%v - %v", device, err)
+			return err
+		}
+	}
+
 	buf := make([]byte, MessageEncapsulatingTransportSize+MessageCookieReplySize)
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = reply.marshal(packet)
+
+	// Prepend junk header if AWG is enabled
+	if device.isAWG() && len(junkedHeader) > 0 {
+		packet = append(junkedHeader, packet...)
+	}
+
 	// TODO: allocation could be avoided
-	device.net.bind.Send([][]byte{buf}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
+	device.net.bind.Send([][]byte{packet}, initiatingElem.endpoint, 0)
 
 	return nil
 }
@@ -459,6 +545,7 @@ func (device *Device) RoutineEncryption(id int) {
 			fieldReceiver := header[4:8]
 			fieldNonce := header[8:16]
 
+			// Use default message type (will be replaced with AWG magic header in RoutineSequentialSender if needed)
 			binary.LittleEndian.PutUint32(fieldType, MessageTransportType)
 			binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
 			binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
@@ -519,6 +606,39 @@ func (peer *Peer) RoutineSequentialSender(maxBatchSize int) {
 		for _, elem := range elemsContainer.elems {
 			if len(elem.packet[MessageEncapsulatingTransportSize:]) != MessageKeepaliveSize {
 				dataSent = true
+
+				// Add AWG obfuscation to transport packets (not keepalives)
+				if device.isAWG() {
+					// Get AWG message type
+					device.awg.Mux.RLock()
+					msgType, err := device.awg.GetMsgType(DefaultMessageTransportType)
+					device.awg.Mux.RUnlock()
+					if err != nil {
+						device.log.Errorf("%v - %v", device, err)
+						continue
+					}
+
+					// Update message type in packet header
+					binary.LittleEndian.PutUint32(elem.packet[MessageEncapsulatingTransportSize:MessageEncapsulatingTransportSize+4], msgType)
+
+					// Create and prepend junk header
+					junkedHeader, err := device.awg.CreateTransportHeaderJunk(len(elem.packet[MessageEncapsulatingTransportSize:]))
+					if err != nil {
+						device.log.Errorf("%v - %v", device, err)
+						continue
+					}
+
+					if len(junkedHeader) > 0 {
+						elem.packet = append(junkedHeader, elem.packet[MessageEncapsulatingTransportSize:]...)
+					} else {
+						elem.packet = elem.packet[MessageEncapsulatingTransportSize:]
+					}
+				} else {
+					elem.packet = elem.packet[MessageEncapsulatingTransportSize:]
+				}
+			} else {
+				// Keepalive packets - just strip encapsulating transport header
+				elem.packet = elem.packet[MessageEncapsulatingTransportSize:]
 			}
 			bufs = append(bufs, elem.packet)
 		}

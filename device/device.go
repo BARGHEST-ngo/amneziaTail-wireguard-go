@@ -6,6 +6,8 @@
 package device
 
 import (
+	"encoding/binary"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -450,6 +452,101 @@ func (device *Device) resetProtocol() {
 	MessageResponseType = DefaultMessageResponseType
 	MessageCookieReplyType = DefaultMessageCookieReplyType
 	MessageTransportType = DefaultMessageTransportType
+}
+
+// ProcessAWGPacket processes an incoming packet with AWG obfuscation,
+// stripping junk headers and returning the actual message type
+func (device *Device) ProcessAWGPacket(size int, packet *[]byte, buffer *[MaxMessageSize]byte) (uint32, error) {
+	var msgTypeToJunkSize map[uint32]int
+	var packetSizeToMsgType map[int]uint32
+
+	// Calculate expected packet sizes with junk headers
+	newInitSize := MessageInitiationSize + device.awg.Cfg.InitHeaderJunkSize
+	newResponseSize := MessageResponseSize + device.awg.Cfg.ResponseHeaderJunkSize
+	newCookieSize := MessageCookieReplySize + device.awg.Cfg.CookieReplyHeaderJunkSize
+	newTransportSize := MessageTransportSize + device.awg.Cfg.TransportHeaderJunkSize
+
+	msgTypeToJunkSize = map[uint32]int{
+		MessageInitiationType:  device.awg.Cfg.InitHeaderJunkSize,
+		MessageResponseType:    device.awg.Cfg.ResponseHeaderJunkSize,
+		MessageCookieReplyType: device.awg.Cfg.CookieReplyHeaderJunkSize,
+		MessageTransportType:   device.awg.Cfg.TransportHeaderJunkSize,
+	}
+
+	packetSizeToMsgType = map[int]uint32{
+		newInitSize:      MessageInitiationType,
+		newResponseSize:  MessageResponseType,
+		newCookieSize:    MessageCookieReplyType,
+		newTransportSize: MessageTransportType,
+	}
+
+	expectedMsgType, isKnownSize := packetSizeToMsgType[size]
+	if !isKnownSize {
+		msgType, err := device.handleTransport(size, packet, buffer)
+		if err != nil {
+			return 0, fmt.Errorf("handle transport: %w", err)
+		}
+		return msgType, nil
+	}
+
+	junkSize := msgTypeToJunkSize[expectedMsgType]
+
+	// transport size can align with other header types;
+	// making sure we have the right actualMsgType
+	actualMsgType, err := device.getMsgType(packet, junkSize)
+	if err != nil {
+		return 0, fmt.Errorf("get msg type: %w", err)
+	}
+
+	if actualMsgType == expectedMsgType {
+		*packet = (*packet)[junkSize:]
+		return actualMsgType, nil
+	}
+
+	device.log.Verbosef("awg: transport packet lined up with another msg type")
+
+	msgType, err := device.handleTransport(size, packet, buffer)
+	if err != nil {
+		return 0, fmt.Errorf("handle transport: %w", err)
+	}
+
+	return msgType, nil
+}
+
+// getMsgType extracts the message type from a packet after skipping junk header
+func (device *Device) getMsgType(packet *[]byte, junkSize int) (uint32, error) {
+	msgTypeValue := binary.LittleEndian.Uint32((*packet)[junkSize : junkSize+4])
+	msgType, err := device.awg.GetMagicHeaderMinFor(msgTypeValue)
+	if err != nil {
+		return 0, fmt.Errorf("get magic header min: %w", err)
+	}
+	return msgType, nil
+}
+
+// handleTransport processes a transport packet with AWG obfuscation
+func (device *Device) handleTransport(size int, packet *[]byte, buffer *[MaxMessageSize]byte) (uint32, error) {
+	junkSize := device.awg.Cfg.TransportHeaderJunkSize
+
+	msgType, err := device.getMsgType(packet, junkSize)
+	if err != nil {
+		return 0, fmt.Errorf("get msg type: %w", err)
+	}
+
+	if msgType != MessageTransportType {
+		// probably a junk packet
+		return 0, fmt.Errorf("received message with unknown type: %d", msgType)
+	}
+
+	if junkSize > 0 {
+		// remove junk from buffer by shifting the packet
+		// this buffer is also used for decryption, so it needs to be corrected
+		copy((*buffer)[:size], (*packet)[junkSize:])
+		size -= junkSize
+		// need to reinitialize packet as well
+		(*packet) = (*packet)[:size]
+	}
+
+	return msgType, nil
 }
 
 func (device *Device) Wait() chan struct{} {

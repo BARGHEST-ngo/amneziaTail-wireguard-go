@@ -134,7 +134,18 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 			// check size of packet
 
 			packet := bufsArrs[i][:size]
-			msgType := binary.LittleEndian.Uint32(packet[:4])
+			var msgType uint32
+			var err error
+
+			if device.isAWG() {
+				msgType, err = device.ProcessAWGPacket(size, &packet, bufsArrs[i])
+				if err != nil {
+					device.log.Verbosef("awg: process packet: %v", err)
+					continue
+				}
+			} else {
+				msgType = binary.LittleEndian.Uint32(packet[:4])
+			}
 
 			switch msgType {
 
