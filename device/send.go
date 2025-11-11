@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tailscale/wireguard-go-awg/conn"
-	"github.com/tailscale/wireguard-go-awg/tun"
+	"github.com/tailscale/wireguard-go/conn"
+	"github.com/tailscale/wireguard-go/tun"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"

@@ -8,7 +8,7 @@ package device
 import (
 	"errors"
 
-	"github.com/tailscale/wireguard-go-awg/conn"
+	"github.com/tailscale/wireguard-go/conn"
 )
 
 type DummyDatagram struct {

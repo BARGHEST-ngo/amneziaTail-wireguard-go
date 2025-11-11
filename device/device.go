@@ -11,11 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tailscale/wireguard-go-awg/conn"
-	"github.com/tailscale/wireguard-go-awg/device/awg"
-	"github.com/tailscale/wireguard-go-awg/ratelimiter"
-	"github.com/tailscale/wireguard-go-awg/rwcancel"
-	"github.com/tailscale/wireguard-go-awg/tun"
+	"github.com/tailscale/wireguard-go/conn"
+	"github.com/tailscale/wireguard-go/device/awg"
+	"github.com/tailscale/wireguard-go/ratelimiter"
+	"github.com/tailscale/wireguard-go/rwcancel"
+	"github.com/tailscale/wireguard-go/tun"
 )
 
 type Version uint8

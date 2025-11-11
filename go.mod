@@ -1,4 +1,4 @@
-module github.com/tailscale/wireguard-go-awg
+module github.com/tailscale/wireguard-go
 
 go 1.24.4
 

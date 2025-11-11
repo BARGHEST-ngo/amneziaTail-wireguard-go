@@ -3,8 +3,8 @@
 package device
 
 import (
-	"github.com/tailscale/wireguard-go-awg/conn"
-	"github.com/tailscale/wireguard-go-awg/rwcancel"
+	"github.com/tailscale/wireguard-go/conn"
+	"github.com/tailscale/wireguard-go/rwcancel"
 )
 
 func (device *Device) startRouteListener(bind conn.Bind) (*rwcancel.RWCancel, error) {
