@@ -97,30 +97,11 @@ func (device *Device) IpcGetOperation(w io.Writer) error {
 			sendf("fwmark=%d", device.net.fwmark)
 		}
 
-		// Serialize AWG configuration
-		if device.isAWG() {
-			device.awg.Mux.RLock()
-			sendf("awg_enabled=1")
-			sendf("awg_junk_packet_count=%d", device.awg.Cfg.JunkPacketCount)
-			sendf("awg_junk_packet_min_size=%d", device.awg.Cfg.JunkPacketMinSize)
-			sendf("awg_junk_packet_max_size=%d", device.awg.Cfg.JunkPacketMaxSize)
-			sendf("awg_init_header_junk_size=%d", device.awg.Cfg.InitHeaderJunkSize)
-			sendf("awg_response_header_junk_size=%d", device.awg.Cfg.ResponseHeaderJunkSize)
-			sendf("awg_cookie_reply_header_junk_size=%d", device.awg.Cfg.CookieReplyHeaderJunkSize)
-			sendf("awg_transport_header_junk_size=%d", device.awg.Cfg.TransportHeaderJunkSize)
-
-			// Serialize magic headers (4 message types)
-			for i, mh := range device.awg.Cfg.MagicHeaders.Values {
-				if mh.Min == mh.Max {
-					sendf("awg_magic_header_%d=%d", i+1, mh.Min)
-				} else {
-					sendf("awg_magic_header_%d=%d-%d", i+1, mh.Min, mh.Max)
-				}
-			}
-			device.awg.Mux.RUnlock()
-		} else {
-			sendf("awg_enabled=0")
-		}
+		// NOTE: AWG configuration is intentionally NOT serialized in IpcGetOperation
+		// to maintain compatibility with Tailscale's wgcfg parser, which doesn't
+		// recognize AWG-specific keys. AWG parameters are stored internally and
+		// can be configured via IpcSetOperation or file-based configuration.
+		// This prevents "unexpected IpcGetOperation key" errors in Tailscale.
 
 		for _, peer := range device.peers.keyMap {
 			// Serialize peer state.
