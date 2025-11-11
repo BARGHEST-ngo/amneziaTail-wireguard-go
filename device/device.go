@@ -454,6 +454,28 @@ func (device *Device) resetProtocol() {
 	MessageTransportType = DefaultMessageTransportType
 }
 
+// SetAWGMagicHeader sets a magic header value at the specified index (0-3)
+func (device *Device) SetAWGMagicHeader(idx int, min, max uint32) error {
+	if idx < 0 || idx > 3 {
+		return fmt.Errorf("invalid magic header index: %d", idx)
+	}
+	if min > max {
+		return fmt.Errorf("min > max: %d > %d", min, max)
+	}
+
+	device.awg.Mux.Lock()
+	defer device.awg.Mux.Unlock()
+
+	// Initialize magic headers array if needed
+	if device.awg.Cfg.MagicHeaders.Values == nil || len(device.awg.Cfg.MagicHeaders.Values) < 4 {
+		device.awg.Cfg.MagicHeaders.Values = make([]awg.MagicHeader, 4)
+	}
+
+	device.awg.Cfg.MagicHeaders.Values[idx] = awg.MagicHeader{Min: min, Max: max}
+	device.awg.Cfg.IsSet = true
+	return nil
+}
+
 // ProcessAWGPacket processes an incoming packet with AWG obfuscation,
 // stripping junk headers and returning the actual message type
 func (device *Device) ProcessAWGPacket(size int, packet *[]byte, buffer *[MaxMessageSize]byte) (uint32, error) {

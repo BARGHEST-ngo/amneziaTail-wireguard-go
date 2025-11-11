@@ -97,6 +97,31 @@ func (device *Device) IpcGetOperation(w io.Writer) error {
 			sendf("fwmark=%d", device.net.fwmark)
 		}
 
+		// Serialize AWG configuration
+		if device.isAWG() {
+			device.awg.Mux.RLock()
+			sendf("awg_enabled=1")
+			sendf("awg_junk_packet_count=%d", device.awg.Cfg.JunkPacketCount)
+			sendf("awg_junk_packet_min_size=%d", device.awg.Cfg.JunkPacketMinSize)
+			sendf("awg_junk_packet_max_size=%d", device.awg.Cfg.JunkPacketMaxSize)
+			sendf("awg_init_header_junk_size=%d", device.awg.Cfg.InitHeaderJunkSize)
+			sendf("awg_response_header_junk_size=%d", device.awg.Cfg.ResponseHeaderJunkSize)
+			sendf("awg_cookie_reply_header_junk_size=%d", device.awg.Cfg.CookieReplyHeaderJunkSize)
+			sendf("awg_transport_header_junk_size=%d", device.awg.Cfg.TransportHeaderJunkSize)
+
+			// Serialize magic headers (4 message types)
+			for i, mh := range device.awg.Cfg.MagicHeaders.Values {
+				if mh.Min == mh.Max {
+					sendf("awg_magic_header_%d=%d", i+1, mh.Min)
+				} else {
+					sendf("awg_magic_header_%d=%d-%d", i+1, mh.Min, mh.Max)
+				}
+			}
+			device.awg.Mux.RUnlock()
+		} else {
+			sendf("awg_enabled=0")
+		}
+
 		for _, peer := range device.peers.keyMap {
 			// Serialize peer state.
 			peer.handshake.mutex.RLock()
@@ -239,6 +264,130 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		}
 		device.log.Verbosef("UAPI: Removing all peers")
 		device.RemoveAllPeers()
+
+	// AWG configuration
+	case "awg_enabled":
+		enabled := value == "1" || value == "true"
+		device.log.Verbosef("UAPI: Setting AWG enabled=%v", enabled)
+		if enabled {
+			device.version = VersionAwg
+			device.awg.IsOn.Set()
+		} else {
+			device.version = VersionDefault
+			device.awg.IsOn.UnSet()
+		}
+
+	case "awg_junk_packet_count":
+		count, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_junk_packet_count: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG junk packet count=%d", count)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.JunkPacketCount = int(count)
+		device.awg.Mux.Unlock()
+
+	case "awg_junk_packet_min_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_junk_packet_min_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG junk packet min size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.JunkPacketMinSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_junk_packet_max_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_junk_packet_max_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG junk packet max size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.JunkPacketMaxSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_init_header_junk_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_init_header_junk_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG init header junk size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.InitHeaderJunkSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_response_header_junk_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_response_header_junk_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG response header junk size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.ResponseHeaderJunkSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_cookie_reply_header_junk_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_cookie_reply_header_junk_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG cookie reply header junk size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.CookieReplyHeaderJunkSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_transport_header_junk_size":
+		size, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid awg_transport_header_junk_size: %w", err)
+		}
+		device.log.Verbosef("UAPI: Setting AWG transport header junk size=%d", size)
+		device.awg.Mux.Lock()
+		device.awg.Cfg.TransportHeaderJunkSize = int(size)
+		device.awg.Mux.Unlock()
+
+	case "awg_magic_header_1", "awg_magic_header_2", "awg_magic_header_3", "awg_magic_header_4":
+		// Parse magic header index from key
+		idx := int(key[len(key)-1] - '1') // Convert '1'-'4' to 0-3
+		if idx < 0 || idx > 3 {
+			return ipcErrorf(ipc.IpcErrorInvalid, "invalid magic header index in key: %v", key)
+		}
+
+		// Parse magic header value using hyphen format (e.g., "100-200" or "100")
+		var min, max uint32
+		if strings.Contains(value, "-") {
+			parts := strings.Split(value, "-")
+			if len(parts) != 2 {
+				return ipcErrorf(ipc.IpcErrorInvalid, "invalid magic header format for %v: %v", key, value)
+			}
+			minVal, err := strconv.ParseUint(parts[0], 10, 32)
+			if err != nil {
+				return ipcErrorf(ipc.IpcErrorInvalid, "invalid magic header min for %v: %w", key, err)
+			}
+			maxVal, err := strconv.ParseUint(parts[1], 10, 32)
+			if err != nil {
+				return ipcErrorf(ipc.IpcErrorInvalid, "invalid magic header max for %v: %w", key, err)
+			}
+			min = uint32(minVal)
+			max = uint32(maxVal)
+		} else {
+			val, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				return ipcErrorf(ipc.IpcErrorInvalid, "invalid magic header value for %v: %w", key, err)
+			}
+			min = uint32(val)
+			max = uint32(val)
+		}
+
+		if min > max {
+			return ipcErrorf(ipc.IpcErrorInvalid, "magic header min > max for %v: %d > %d", key, min, max)
+		}
+
+		device.log.Verbosef("UAPI: Setting AWG magic header %d=%d-%d", idx+1, min, max)
+		if err := device.SetAWGMagicHeader(idx, min, max); err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to set magic header: %w", err)
+		}
 
 	default:
 		return ipcErrorf(ipc.IpcErrorInvalid, "invalid UAPI device key: %v", key)
